@@ -58,6 +58,8 @@ public class Board implements LeelazListener {
   public boolean isAvoding = false;
   public boolean isKeepingAvoid = false;
 
+  public RegionOfInterest regionOfInterest = new RegionOfInterest();
+
   // Save the node for restore move when in the branch
   private Optional<BoardHistoryNode> saveNode;
 
@@ -88,8 +90,8 @@ public class Board implements LeelazListener {
   }
 
   public static int[] getCoord(int index) {
-    int y = index % Board.boardHeight;
-    int x = (index - y) / Board.boardHeight;
+    int y = index % Board.boardWidth;
+    int x = (index - y) / Board.boardWidth;
     return new int[] {x, y};
   }
 
@@ -410,6 +412,7 @@ public class Board implements LeelazListener {
       Stone[] stones = history.getStones().clone();
       Zobrist zobrist = history.getZobrist();
       int moveNumber = history.getMoveNumber() + 1;
+      int moveMNNumber = nextMoveMNNumber(newBranch);
       int[] moveNumberList =
           newBranch && history.getNext(true).isPresent()
               ? new int[Board.boardWidth * Board.boardHeight]
@@ -430,6 +433,7 @@ public class Board implements LeelazListener {
               0.0,
               0,
               0.0);
+      newState.moveMNNumber = moveMNNumber;
       newState.dummy = dummy;
 
       // update leelaz with pass
@@ -447,6 +451,12 @@ public class Board implements LeelazListener {
   /** overloaded method for pass(), chooses color in an alternating pattern */
   public void pass() {
     pass(history.isBlacksTurn() ? Stone.BLACK : Stone.WHITE);
+  }
+
+  private int nextMoveMNNumber(boolean newBranch) {
+    boolean isNewSubBranch = newBranch && (history.getCurrentHistoryNode().numberOfChildren() > 0);
+    boolean isMissingMoveMNNumber = history.getMoveMNNumber() < 0;
+    return isNewSubBranch ? 1 : isMissingMoveMNNumber ? -1 : history.getMoveMNNumber() + 1;
   }
 
   /**
@@ -518,8 +528,7 @@ public class Board implements LeelazListener {
       Zobrist zobrist = history.getZobrist();
       Optional<int[]> lastMove = Optional.of(new int[] {x, y});
       int moveNumber = history.getMoveNumber() + 1;
-      int moveMNNumber =
-          history.getMoveMNNumber() > -1 && !newBranch ? history.getMoveMNNumber() + 1 : -1;
+      int moveMNNumber = nextMoveMNNumber(newBranch);
       int[] moveNumberList =
           newBranch && history.getNext(true).isPresent()
               ? new int[Board.boardWidth * Board.boardHeight]
@@ -1066,7 +1075,7 @@ public class Board implements LeelazListener {
         // Will delete more than one move, ask for confirmation
         int ret =
             JOptionPane.showConfirmDialog(
-                null,
+                Lizzie.frame,
                 "This will delete all moves and branches after this move",
                 "Delete",
                 JOptionPane.OK_CANCEL_OPTION);
@@ -1385,10 +1394,13 @@ public class Board implements LeelazListener {
       Lizzie.leelaz.removeListener(this);
       analysisMode = false;
     } else {
-      if (!getNextMove().isPresent()) return;
+      if (!getNextMove().isPresent()) {
+        JOptionPane.showMessageDialog(Lizzie.frame, "No next move.");
+        return;
+      }
       String answer =
           JOptionPane.showInputDialog(
-              "# playouts for analysis (e.g. 100 (fast) or 50000 (slow)): ");
+              Lizzie.frame, "# playouts for analysis (e.g. 100 (fast) or 50000 (slow)): ");
       try {
         playoutsAnalysis = Integer.parseInt(answer);
       } catch (NumberFormatException err) {

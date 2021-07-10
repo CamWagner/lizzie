@@ -29,6 +29,7 @@ public class SGFParser {
   private static final String[] listProps =
       new String[] {"LB", "CR", "SQ", "MA", "TR", "AB", "AW", "AE"};
   private static final String[] markupProps = new String[] {"LB", "CR", "SQ", "MA", "TR"};
+  private static final String writerEncoding = "UTF-8";
 
   public static boolean load(String filename) throws IOException {
     // Clear the board
@@ -165,6 +166,7 @@ public class SGFParser {
     }
 
     String blackPlayer = "", whitePlayer = "";
+    String blackPlayerRank = "", whitePlayerRank = "";
 
     // Support unicode characters (UTF-8)
     for (int i = 0; i < value.length(); i++) {
@@ -290,12 +292,12 @@ public class SGFParser {
             line1[1] =
                 line1[1].replaceAll(",", "."); // fix a decimal representation localization issue
             Lizzie.board.getData().winrate = 100 - Double.parseDouble(line1[1]);
+            String playoutsStr = line1[2];
+            int kilo = 1000;
+            int playoutsUnit =
+                playoutsStr.endsWith("m") ? kilo * kilo : playoutsStr.endsWith("k") ? kilo : 1;
             int numPlayouts =
-                Integer.parseInt(
-                    line1[2]
-                        .replaceAll("k", "000")
-                        .replaceAll("m", "000000")
-                        .replaceAll("[^0-9]", ""));
+                (int) (Double.parseDouble(playoutsStr.replaceAll("[^0-9.]", "")) * playoutsUnit);
             Lizzie.board.getData().setPlayouts(numPlayouts);
             if (numPlayouts > 0 && !line2.isEmpty()) {
               Lizzie.board.getData().bestMoves = Lizzie.leelaz.parseInfo(line2);
@@ -307,6 +309,8 @@ public class SGFParser {
                         .getScoreMeanFromBestMoves(Lizzie.board.getData().bestMoves);
               }
             }
+            Lizzie.board.getData().engineIndex = Leelaz.engineIndex;
+            Lizzie.board.getData().komi = Lizzie.board.getHistory().getGameInfo().getKomi();
           } else if (tag.equals("AB") || tag.equals("AW")) {
             int[] move = convertSgfPosToCoord(tagContent);
             Stone color = tag.equals("AB") ? Stone.BLACK : Stone.WHITE;
@@ -384,6 +388,10 @@ public class SGFParser {
             } else {
               history.getGameInfo().setPlayerWhite(whitePlayer);
             }
+          } else if (tag.equals("BR")) {
+            blackPlayerRank = tagContent;
+          } else if (tag.equals("WR")) {
+            whitePlayerRank = tagContent;
           } else if (tag.equals("KM")) {
             try {
               if (tagContent.trim().isEmpty()) {
@@ -481,6 +489,10 @@ public class SGFParser {
           }
           break;
         case ';':
+          if (inProp) {
+            // support C[a;b;c;]
+            tagContentBuilder.append(c);
+          }
           break;
         default:
           if (subTreeDepth > 1 && !isMultiGo) {
@@ -497,6 +509,24 @@ public class SGFParser {
               tagBuilder.append(c);
             }
           }
+      }
+    }
+
+    // adjust player name
+    if (!Utils.isBlank(blackPlayerRank)) {
+      blackPlayer = blackPlayer + " " + blackPlayerRank;
+      if (history == null) {
+        Lizzie.board.getHistory().getGameInfo().setPlayerBlack(blackPlayer);
+      } else {
+        history.getGameInfo().setPlayerBlack(blackPlayer);
+      }
+    }
+    if (!Utils.isBlank(whitePlayerRank)) {
+      whitePlayer = whitePlayer + " " + whitePlayerRank;
+      if (history == null) {
+        Lizzie.board.getHistory().getGameInfo().setPlayerWhite(whitePlayer);
+      } else {
+        history.getGameInfo().setPlayerWhite(whitePlayer);
       }
     }
 
@@ -567,7 +597,7 @@ public class SGFParser {
   }
 
   public static void save(Board board, String filename) throws IOException {
-    try (Writer writer = new OutputStreamWriter(new FileOutputStream(filename))) {
+    try (Writer writer = new OutputStreamWriter(new FileOutputStream(filename), writerEncoding)) {
       saveToStream(board, writer);
     }
   }
@@ -588,7 +618,8 @@ public class SGFParser {
     if (handicap != 0) generalProps.append(String.format("HA[%s]", handicap));
     generalProps.append(
         String.format(
-            "KM[%s]PW[%s]PB[%s]DT[%s]AP[Lizzie: %s]SZ[%s]",
+            "CA[%s]KM[%s]PW[%s]PB[%s]DT[%s]AP[Lizzie: %s]SZ[%s]",
+            writerEncoding,
             komi,
             playerW,
             playerB,
@@ -892,6 +923,7 @@ public class SGFParser {
             }
           }
           break;
+        case ';':
         case ')':
           if (inTag) {
             tagContentBuilder.append(c);
@@ -909,8 +941,6 @@ public class SGFParser {
           inTag = false;
           tagBuilder = new StringBuilder();
           addProperty(props, tag, tagContentBuilder.toString());
-          break;
-        case ';':
           break;
         default:
           if (inTag) {
@@ -935,7 +965,11 @@ public class SGFParser {
    */
   public static String propertiesString(Map<String, String> props) {
     StringBuilder sb = new StringBuilder();
-    props.forEach((key, value) -> sb.append(nodeString(key, value)));
+    // Place "CA" before non-ASCII characters for safety.
+    String charsetKey = "CA";
+    String charsetValue = props.get(charsetKey);
+    if (charsetValue != null) sb.append(nodeString(charsetKey, charsetValue));
+    props.forEach((key, value) -> sb.append(key == charsetKey ? "" : nodeString(key, value)));
     return sb.toString();
   }
 

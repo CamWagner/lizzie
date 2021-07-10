@@ -117,18 +117,23 @@ public class EngineManager {
       if (!newEng.isStarted()) {
         newEng.startEngine();
       } else {
+        newEng.updateKataGoRule();
         if (!newEng.isPondering()) {
           newEng.togglePonder();
         }
       }
       Lizzie.board.restoreMoveNumber();
       this.currentEngineNo = index;
+      if (curEng.preload && newEng.preload) {
+        updateEngineIcon();
+      }
       if (!curEng.preload) {
         curEng.normalQuit();
       }
     } catch (IOException e) {
       e.printStackTrace();
     }
+    Lizzie.frame.refresh();
   }
 
   public void refresh() throws JSONException, IOException {

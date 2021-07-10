@@ -41,13 +41,11 @@ import java.nio.file.Path;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ResourceBundle;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.Vector;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -99,14 +97,13 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-public class ConfigDialog extends JDialog {
+public class ConfigDialog extends LizzieDialog {
   public final ResourceBundle resourceBundle = MainFrame.resourceBundle;
 
   public String enginePath = "";
   public String weightPath = "";
   public String commandHelp = "";
 
-  private String osName;
   private Path curPath;
   private BufferedInputStream inputStream;
   private JSONObject leelazConfig;
@@ -223,9 +220,7 @@ public class ConfigDialog extends JDialog {
   public ConfigDialog() {
     setTitle(resourceBundle.getString("LizzieConfig.title.config"));
     setModalityType(ModalityType.APPLICATION_MODAL);
-    if (isWindows()) { // avoid suspicious behavior on Linux (#616)
-      setType(Type.POPUP);
-    }
+    setType(Type.POPUP);
     setBounds(100, 100, 661, 716);
     getContentPane().setLayout(new BorderLayout());
     JPanel buttonPane = new JPanel();
@@ -235,6 +230,7 @@ public class ConfigDialog extends JDialog {
     okButton.addActionListener(
         new ActionListener() {
           public void actionPerformed(ActionEvent e) {
+            finalizeEditedBlunderColors();
             setVisible(false);
             saveConfig();
             applyChange();
@@ -761,6 +757,9 @@ public class ConfigDialog extends JDialog {
                     txts[i].setText(a.getString(i));
                   });
         });
+    Arrays.asList(txts)
+        .stream()
+        .forEach(t -> t.setToolTipText("Engine Command or <Label> Engine Command"));
 
     chkPreloads =
         new JCheckBox[] {
@@ -792,7 +791,6 @@ public class ConfigDialog extends JDialog {
         String.valueOf(leelazConfig.getInt("max-game-thinking-time-seconds")));
     chkPrintEngineLog.setSelected(leelazConfig.getBoolean("print-comms"));
     curPath = (new File("")).getAbsoluteFile().toPath();
-    osName = System.getProperty("os.name", "generic").toLowerCase(Locale.ENGLISH);
     setShowLcbWinrate();
     JLabel lblBoardSize = new JLabel(resourceBundle.getString("LizzieConfig.title.boardSize"));
     lblBoardSize.setBounds(6, 6, 67, 16);
@@ -1541,7 +1539,7 @@ public class ConfigDialog extends JDialog {
       btnAdd.addActionListener(
           new ActionListener() {
             public void actionPerformed(ActionEvent e) {
-              ((BlunderNodeTableModel) tblBlunderNodes.getModel()).addRow("", Color.WHITE);
+              ((BlunderNodeTableModel) tblBlunderNodes.getModel()).addRow(null, Color.WHITE);
             }
           });
       themeTab.add(btnAdd);
@@ -1683,7 +1681,12 @@ public class ConfigDialog extends JDialog {
                 int squareLength = 30;
                 int stoneRadius = squareLength < 4 ? 1 : squareLength / 2 - 1;
                 int size = stoneRadius * 2 + 1;
-                double r = stoneRadius * Lizzie.config.shadowSize / 100;
+                double r =
+                    stoneRadius
+                        * (theme == null || cmbThemes.getSelectedIndex() <= 0
+                            ? Lizzie.config.shadowSize
+                            : theme.shadowSize())
+                        / 100;
                 int shadowSize = (int) (r * 0.3) == 0 ? 1 : (int) (r * 0.3);
                 int fartherShadowSize = (int) (r * 0.17) == 0 ? 1 : (int) (r * 0.17);
                 int stoneX = x + squareLength * 2;
@@ -1815,7 +1818,7 @@ public class ConfigDialog extends JDialog {
     @Override
     protected void done() {
       okButton.setEnabled(true);
-      pnlBoardPreview.repaint();
+      tabbedPane.repaint();
     }
   }
 
@@ -1829,9 +1832,8 @@ public class ConfigDialog extends JDialog {
           new FileNameExtensionFilter(
               resourceBundle.getString("LizzieConfig.title.engine"), "exe", "bat", "sh");
       chooser.setFileFilter(filter);
-    } else {
-      setVisible(false);
     }
+
     chooser.setMultiSelectionEnabled(false);
     chooser.setDialogTitle(resourceBundle.getString("LizzieConfig.prompt.selectEngine"));
     int result = chooser.showOpenDialog(this);
@@ -1925,6 +1927,7 @@ public class ConfigDialog extends JDialog {
   }
 
   private void applyChange() {
+    Lizzie.config.applyTheme();
     int[] size = getBoardSize();
     Lizzie.board.reopen(size[0], size[1]);
     if (Lizzie.engineManager == null) {
@@ -1937,6 +1940,9 @@ public class ConfigDialog extends JDialog {
     } catch (IOException e) {
       e.printStackTrace();
     }
+    Lizzie.frame.resetImages();
+    Lizzie.frame.refreshBackground();
+    Lizzie.frame.refresh();
   }
 
   private Integer txtFieldIntValue(JTextField txt) {
@@ -2088,7 +2094,7 @@ public class ConfigDialog extends JDialog {
       if (blunderWinrateThresholds != null) {
         for (Double d : blunderWinrateThresholds) {
           Vector<Object> row = new Vector<Object>();
-          row.add(String.valueOf(d));
+          row.add(d);
           row.add(blunderNodeColors.get(d));
           data.add(row);
         }
@@ -2097,7 +2103,7 @@ public class ConfigDialog extends JDialog {
 
     public JSONArray getThresholdArray() {
       JSONArray thresholds = new JSONArray("[]");
-      data.forEach(d -> thresholds.put(new Double((String) d.get(0))));
+      data.forEach(d -> thresholds.put(toDouble(d.get(0))));
       return thresholds;
     }
 
@@ -2107,7 +2113,7 @@ public class ConfigDialog extends JDialog {
       return colors;
     }
 
-    public void addRow(String threshold, Color color) {
+    public void addRow(Double threshold, Color color) {
       Vector<Object> row = new Vector<Object>();
       row.add(threshold);
       row.add(color);
@@ -2118,7 +2124,7 @@ public class ConfigDialog extends JDialog {
     public void removeRow(int index) {
       if (index >= 0 && index < data.size()) {
         data.remove(index);
-        fireTableRowsDeleted(0, data.size() - 1);
+        fireTableRowsDeleted(index, index);
       }
     }
 
@@ -2139,7 +2145,7 @@ public class ConfigDialog extends JDialog {
     }
 
     public Class<?> getColumnClass(int c) {
-      return getValueAt(0, c).getClass();
+      return c == 0 ? Double.class : Color.class;
     }
 
     public void setValueAt(Object value, int row, int col) {
@@ -2150,10 +2156,24 @@ public class ConfigDialog extends JDialog {
     public boolean isCellEditable(int row, int col) {
       return true;
     }
-  }
 
-  public boolean isWindows() {
-    return osName != null && !osName.contains("darwin") && osName.contains("win");
+    private double toDouble(Object x) {
+      final double invalid = 0.0;
+      try {
+        return (Double) x;
+      } catch (Exception e) {
+        return invalid;
+      }
+    }
+
+    public void sortData() {
+      data.sort(
+          new Comparator<Vector<Object>>() {
+            public int compare(Vector<Object> a, Vector<Object> b) {
+              return Double.compare(toDouble(a.get(0)), toDouble(b.get(0)));
+            }
+          });
+    }
   }
 
   private void setShowLcbWinrate() {
@@ -2477,6 +2497,14 @@ public class ConfigDialog extends JDialog {
         ((BlunderNodeTableModel) tblBlunderNodes.getModel()).getColorArray());
   }
 
+  private void finalizeEditedBlunderColors() {
+    if (tblBlunderNodes == null) return;
+    TableCellEditor editor = tblBlunderNodes.getCellEditor();
+    BlunderNodeTableModel model = (BlunderNodeTableModel) tblBlunderNodes.getModel();
+    if (editor != null) editor.stopCellEditing();
+    if (model != null) model.sortData();
+  }
+
   private void saveConfig() {
     try {
       leelazConfig.putOpt("max-analyze-time-minutes", txtFieldIntValue(txtMaxAnalyzeTime));
@@ -2571,16 +2599,5 @@ public class ConfigDialog extends JDialog {
 
   public void switchTab(int index) {
     tabbedPane.setSelectedIndex(index);
-    if (index == 2) {
-      Timer timer = new Timer();
-      timer.schedule(
-          new TimerTask() {
-            public void run() {
-              tabbedPane.repaint();
-              this.cancel();
-            }
-          },
-          100);
-    }
   }
 }
